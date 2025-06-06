@@ -1,169 +1,138 @@
-# README: Corpus der Entscheidungen des Bundesverfassungsgerichts (CE-BVerfGE)
+# BVerfG RAG Corpus
 
 ## Überblick
 
-Das **Corpus der Entscheidungen des Bundesverfassungsgerichts (CE-BVerfG)** ist eine möglichst vollständige Sammlung der vom Bundesverfassungsgericht veröffentlichten Entscheidungen. Der Datensatz nutzt als seine Datenquelle die [amtliche Entscheidungsdatenbank](https://www.bundesverfassungsgericht.de) des Bundesverfassungsgerichts und wertet diese vollständig aus.
+Schlanke, RAG-optimierte Version des **Corpus der Entscheidungen des Bundesverfassungsgerichts**. Diese Pipeline extrahiert BVerfG-Entscheidungen in einem für Retrieval-Augmented Generation (RAG) optimierten Format.
 
-Alle mit diesem Skript erstellten Datensätze werden dauerhaft kostenlos und urheberrechtsfrei auf Zenodo, dem wissenschaftlichen Archiv des CERN, veröffentlicht. Alle Versionen sind mit einem separaten und langzeit-stabilen (persistenten) Digital Object Identifier (DOI) versehen.
+## 🎯 Für RAG optimiert
 
-Aktuellster, funktionaler und zitierfähiger Release des Datensatzes: <https://doi.org/10.5281/zenodo.3902658>
+- **Kompakte Datenstruktur**: Nur relevante Metadaten und Volltext
+- **Mehrere Exportformate**: CSV, RDS, JSON
+- **Bereinigte Texte**: Entfernung von Formatierungsresten
+- **Chunking-bereit**: Geeignet für Embedding-Modelle
+- **⚡ Inkrementelle Updates**: Nur neue Entscheidungen werden heruntergeladen
 
+## 🚀 Schnellstart
 
+### Voraussetzungen
+- R (≥ 4.0)
+- Internet-Verbindung
 
-
-## Funktionsweise
-
-Primäre Endprodukte des Skripts sind folgende ZIP-Archive:
- 
-- Der volle Datensatz im CSV-Format
-- Die reinen Metadaten im CSV-Format (wie unter 1, nur ohne Entscheidungstexte)
-- Zitationsnetzwerk des BVerfG im GraphML-Format
-- (Optional) Tokenisierte Form aller Texte mit linguistischen Annotationen im CSV-Format
-- Alle Entscheidungen im HTML-Format
-- Alle Entscheidungen im TXT-Format (reduzierter Umfang an Metadaten)
-- Alle Entscheidungen im PDF-Format (reduzierter Umfang an Metadaten)
-- Alle Analyse-Ergebnisse (Tabellen als CSV, Grafiken als PDF und PNG)
-- Der Source Code und alle weiteren Quelldaten
-
-
-Alle Ergebnisse werden im Ordner `output` abgelegt. Zusätzlich werden für alle ZIP-Archive kryptographische Signaturen (SHA2-256 und SHA3-512) berechnet und in einer CSV-Datei hinterlegt.
-
-
-
-## Systemanforderungen
-
-- [Docker](https://docs.docker.com/get-docker/)
-- [Docker Compose](https://docs.docker.com/compose/install/)
-- 5 GB Speicherplatz auf Festplatte
-- Multi-core CPU empfohlen (8 cores/16 threads für die Referenzdatensätze). 
-
-
-In der Standard-Einstellung wird das Skript vollautomatisch die maximale Anzahl an Rechenkernen/Threads auf dem System zu nutzen. Die Anzahl der verwendeten Kerne kann in der Konfigurationsatei angepasst werden. Wenn die Anzahl Threads auf 1 gesetzt wird, ist die Parallelisierung deaktiviert.
-
-
-
-## Anleitung
-
-
-### Schritt 1: Ordner vorbereiten
-
-Kopieren Sie bitte den gesamten Source Code in einen leeren Ordner (!), beispielsweise mit:
-
-```
-$ git clone https://github.com/seanfobbe/ce-bverfg
+### Installation
+```bash
+git clone https://github.com/MansKos/bverfg.git
+cd bverfg
 ```
 
-Verwenden Sie immer einen separaten und *leeren* Ordner für die Kompilierung. Die Skripte löschen innerhalb von bestimmten Unterordnern (`files/`, `temp/`, `analysis` und `output/`) alle Dateien die den Datensatz verunreinigen könnten --- aber auch nur dort.
-
-
-### Schritt 2: Docker Image erstellen
-
-Ein Docker Image stellt ein komplettes Betriebssystem mit der gesamten verwendeten Software automatisch zusammen. Nutzen Sie zur Erstellung des Images einfach:
-
-```
-$ bash docker-build-image.sh
+### Ausführung
+```r
+# R-Konsole
+source("run_project.R")
 ```
 
-### Schritt 3: Datensatz kompilieren
+## 📊 Ausgabe
 
-Falls Sie zuvor den Datensatz schon einmal kompiliert haben (ob erfolgreich oder erfolglos), können Sie mit folgendem Befehl alle Arbeitsdaten im Ordner löschen:
+Die Pipeline erstellt drei Dateiformate im `output/` Ordner:
 
+- **`bverfg_rag_corpus.csv`** - CSV für allgemeine Nutzung
+- **`bverfg_rag_corpus.rds`** - R-Format (kompakt, schnell)
+- **`bverfg_rag_corpus.json`** - JSON für Python/JavaScript
+
+## 🏗️ Datenstruktur
+
+Jede Entscheidung enthält:
 ```
-$ Rscript delete_all_data.R
-```
-
-Den vollständigen Datensatz kompilieren Sie mit folgendem Skript:
-
-```
-$ bash docker-run-project.sh
-```
-
-
-### Ergebnis
-
-Der Datensatz und alle weiteren Ergebnisse sind nun im Ordner `output/` abgelegt.
-
-
-
-
-
-## Pipeline visualisieren
-
-Sie können die Pipeline visualisieren, aber nur nachdem sie die zentrale .Rmd-Datei mindestens einmal gerendert haben:
-
-```
-> targets::tar_glimpse()     # Nur Datenobjekte
-> targets::tar_visnetwork()  # Alle Objekte
+id              # Eindeutige Kennung
+title           # Titel der Entscheidung
+date            # Entscheidungsdatum
+content         # Volltext (bereinigt)
+url             # Original-URL
+aktenzeichen    # Aktenzeichen
+gericht         # Gericht
 ```
 
+## 💡 RAG-Integration
 
+### Python-Beispiel
+```python
+import pandas as pd
+from sentence_transformers import SentenceTransformer
 
+# Daten laden
+df = pd.read_csv('output/bverfg_rag_corpus.csv')
 
-
-## Troubleshooting
-
-Hilfreiche Befehle um Fehler zu lokalisieren und zu beheben.
-
+# Embeddings erstellen
+model = SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')
+embeddings = model.encode(df['content'].tolist())
 ```
-> tar_progress()  # Zeigt Fortschritt und Fehler an
-> tar_meta()      # Alle Metadaten
-> tar_meta(fields = "warnings", complete_only = TRUE)  # Warnungen
-> tar_meta(fields = "error", complete_only = TRUE)  # Fehlermeldungen
-> tar_meta(fields = "seconds")  # Laufzeit der Targets
+
+### R-Beispiel
+```r
+# Daten laden
+corpus <- readRDS("output/bverfg_rag_corpus.rds")
+
+# Text-Chunks erstellen (für große Texte)
+library(text)
+chunks <- corpus[, .(
+  chunk = stringr::str_sub(content, 
+                          seq(1, nchar(content), 1000), 
+                          seq(1000, nchar(content), 1000))
+), by = id]
 ```
 
+## ⚙️ Konfiguration
 
+Anpassungen in `config.toml`:
+```toml
+[cores]
+max = true      # Alle CPU-Kerne nutzen
+number = 8      # Oder feste Anzahl
 
-## Projektstruktur
+[debug]
+toggle = false  # Für Tests auf true setzen
+pages = 20      # Testmodus: nur 20 Seiten
 
-Die folgende Struktur erläutert die wichtigsten Bestandteile des Projekts. Während der Kompilierung werden weitere Ordner erstellt (`pdf/`, `txt/`, `temp/` `analysis` und `output/`). Die Endergebnisse werden alle in `output/` abgelegt.
+[rag]
+max_text_length = 10000  # Max. Zeichen pro Text
+chunk_overlap = 200      # Überlappung für Chunking
+```
 
- 
-``` 
-.
-├── buttons                    # Buttons (nur optische Bedeutung)
-├── CHANGELOG.md               # Alle Änderungen
-├── config.toml                # Zentrale Konfigurations-Datei
-├── data                       # Datensätze, auf denen die Pipeline aufbaut
-├── delete_all_data.R          # Löscht den Datensatz und Zwischenschritte
-├── docker-build-image.sh      # Docker Image erstellen
-├── docker-compose.yaml        # Konfiguration für Docker
-├── docker-delete-all-data.sh  # Löscht Datensatz und Zwischenergebnisse via Docker
-├── Dockerfile                 # Definition des Docker Images
-├── docker-run-project.sh      # Docker Image und Datensatz kompilieren
-├── etc                        # Weitere Konfigurationsdateien
-├── functions                  # Wichtige Schritte der Pipeline
-├── gpg                        # Persönlicher Public GPG-Key für Seán Fobbe
-├── LICENSE                    # Volltext der Lizenz für den Source Code
-├── pipeline.Rmd               # Zentrale Definition der Pipeline
-├── README.md                  # Bedienungsanleitung
-├── reports                    # Markdown-Dateien
-├── run_project.R              # Kompiliert den gesamten Datensatz
-└── tex                        # LaTeX-Templates
+## 🔧 Systemanforderungen
 
+- **Minimal**: 2 GB RAM, 1 GB Festplatte
+- **Empfohlen**: 4 GB RAM, Multi-Core CPU
+- **Internet**: Für Download der Entscheidungen
 
-``` 
+## 🔄 Inkrementelle Updates
 
+**Intelligentes Download-System:**
+- ✅ **Beim ersten Lauf**: Alle Entscheidungen werden heruntergeladen
+- ✅ **Bei späteren Läufen**: Nur neue Entscheidungen 
+- ✅ **Cache-System**: HTML-Dateien werden in `html_cache/` gespeichert
+- ✅ **Deutlich schneller**: Keine unnötigen Re-Downloads
 
+**Cache verwalten:**
+```r
+# Cache-Status prüfen
+list.files("html_cache", pattern = "\\.html$") |> length()
 
+# Cache löschen (für kompletten Neustart)
+unlink("html_cache", recursive = TRUE)
+```
 
- 
+## 📝 Lizenz
 
-## Weitere Open Access Veröffentlichungen (Fobbe)
+- **Daten**: Creative Commons Zero (CC0)
+- **Code**: GNU GPL v3
 
-Website — https://www.seanfobbe.de
+## 🤝 Beitragen
 
-Open Data  —  https://zenodo.org/communities/sean-fobbe-data/
+Issues und Pull Requests sind willkommen!
 
-Source Code  —  https://zenodo.org/communities/sean-fobbe-code/
+## 📧 Kontakt
 
-Volltexte regulärer Publikationen  —  https://zenodo.org/communities/sean-fobbe-publications/
-
-
-
-## Kontakt
-
-Fehler gefunden? Anregungen? Kommentieren Sie gerne im Issue Tracker auf GitHub oder kontaktieren Sie mich via https://www.seanfobbe.de/contact
+Basiert auf dem ursprünglichen Werk von Seán Fobbe.
+Angepasst für RAG-Anwendungen.
 
 
 

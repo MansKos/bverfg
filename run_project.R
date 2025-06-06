@@ -1,15 +1,20 @@
-# Run full pipeline
+# BVerfG RAG Corpus - Einfache Pipeline
 
-dir.out <- "output"
+# Output-Ordner erstellen
+dir.create("output", showWarnings = FALSE)
 
-dir.create(dir.out, showWarnings = FALSE)
-
+# Konfiguration laden
 config <- RcppTOML::parseTOML("config.toml")
 
+# Pipeline ausführen
+cat("🚀 Starte BVerfG RAG Corpus Pipeline...\n")
+
 rmarkdown::render("pipeline.Rmd",
-                  output_file = file.path(dir.out,
+                  output_file = file.path("output",
                                           paste0(config$project$shortname,
                                                  "_",
                                                  Sys.Date(),
-                                                 "_CompilationReport.pdf")))
+                                                 "_RAG_Report.html")))
+
+cat("✅ Pipeline abgeschlossen! Ergebnisse in output/ Ordner.\n")
 

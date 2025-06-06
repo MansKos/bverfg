@@ -1,1419 +1,308 @@
 ---
-title: "Compilation Report | Corpus der Entscheidungen des Bundesverfassungsgerichts (CE-BVerfG)"
-author: Seán Fobbe
-geometry: margin=3cm
-fontsize: 11pt
-papersize: a4
-output:
-  pdf_document:
-    toc: true
-    toc_depth: 3
-    number_sections: true
-    pandoc_args: --listings
-    includes:
-      in_header: tex/Preamble_DE.tex
-      before_body: [temp/Definitions.tex, tex/Titlepage_Compilation.tex]
-bibliography: temp/packages.bib
-nocite: '@*'
+title: "BVerfG RAG Corpus Pipeline"
+author: "RAG-optimierte Version"  
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: html_document
 ---
 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 
-
-```{r setup, include = FALSE}
-knitr::opts_chunk$set(echo = TRUE,
-                      warning = TRUE,
-                      message = TRUE,
-                      collapse = TRUE,
-                      comment = "#>")
-```
-
-
-
-
-```{r, results = "asis", echo = FALSE}
-cat(readLines("README.md"),
-    sep = "\n")
-```
-
-
-
-# Packages laden
-
-
-```{r}
-
+# Bibliotheken laden
 library(targets)
 library(tarchetypes)
-library(RcppTOML)
 library(future)
+library(future.callr)
+library(RcppTOML)
 library(data.table)
-library(quanteda)
-library(knitr)
-library(kableExtra)
-library(igraph)
-library(ggraph)
+library(rvest)
+library(httr)
+library(stringr)
+library(dplyr)
+library(jsonlite)
 
-tar_unscript()
-```
-
-
-
-# Vorbereitung
-
-## Definitionen
-
-```{r}
-
-## Datum
-datestamp <- Sys.Date()
-print(datestamp)
-
-## Datum und Uhrzeit (Beginn)
-begin.script <- Sys.time()
-
-## Konfiguration
+# Konfiguration laden
 config <- RcppTOML::parseTOML("config.toml")
-print(config)
 
+# Parallelisierung einrichten
+if(config$cores$max) {
+  plan(callr, workers = parallel::detectCores())
+} else {
+  plan(callr, workers = config$cores$number)
+}
 
-# Analyse-Ordner
-dir.analysis <- paste0(getwd(),
-                       "/analysis")
-
-
-```
-
-
-## Aufräumen
-
-Löscht Dateien im Output-Ordner, die nicht vom heutigen Tag sind.
-
-
-```{r}
-
-unlink(grep(datestamp,
-            list.files("output",
-                       full.names = TRUE),
-            invert = TRUE,
-            value = TRUE))
-
-
-```
-
-
-
-## Ordner erstellen
-
-```{r}
-
-#unlink("output", recursive = TRUE)
+# Output-Ordner erstellen
 dir.create("output", showWarnings = FALSE)
-dir.create("temp", showWarnings = FALSE)
-
-dir.create(dir.analysis, showWarnings = FALSE)
-
 ```
 
+# BVerfG RAG Corpus Pipeline
 
+Diese schlanke Pipeline extrahiert BVerfG-Entscheidungen optimal für RAG-Anwendungen.
 
-## Vollzitate statistischer Software schreiben
+## Funktionen laden
 
-```{r}
-knitr::write_bib(renv::dependencies()$Package,
-                 "temp/packages.bib")
+```{r load-functions}
+# Nur essenzielle Funktionen für RAG
+source("functions/f.download.R")
+source("functions/f.download_table_make.R")
+source("functions/f.parse_html_bverfg.R") 
+source("functions/f.bverfg.extract.content.R")
+source("functions/f.bverfg.extract.meta.R")
+source("functions/f.clean_meta.R")
+source("functions/f.readtext.R")
 ```
 
-
-
-
-# Globale Variablen
-
-
-## Packages definieren
-
-```{targets global-packages, tar_globals = TRUE}
-
-tar_option_set(packages = c("tarchetypes",
-                            "RcppTOML",     # TOML-Dateien lesen und schreiben
-							"testthat",     # Unit Tests
-                            "fs",           # Verbessertes File Handling
-                            "zip",          # Verbessertes ZIP Handling
-                            "mgsub",        # Vektorisiertes Gsub
-                            "httr",         # HTTP-Werkzeuge
-                            "rvest",        # HTML/XML-Extraktion
-                            "knitr",        # Professionelles Reporting
-                            "kableExtra",   # Verbesserte Kable Tabellen
-                            "pdftools",     # Verarbeitung von PDF-Dateien
-                            "ggplot2",      # Datenvisualisierung
-							"igraph",       # Netzwerkanalyse
-							"ggraph",       # Visualisierung von Graphen
-                            "scales",       # Skalierung von Diagrammen
-                            "data.table",   # Fortgeschrittene Datenverarbeitung
-                            "readtext",     # TXT-Dateien einlesen
-                            "quanteda",     # Computerlinguistik
-                            "future",       # Parallelisierung
-                            "future.apply"))# Funktionen für Future
-
-tar_option_set(workspace_on_error = TRUE) # Save Workspace on Error
-tar_option_set(format = "qs")
-
-```
-
-
-## Konfiguration
-
-
-```{targets global-config, tar_globals = TRUE}
-
-datestamp <- Sys.Date()
-
-config <- RcppTOML::parseTOML("config.toml")
-
-dir.analysis <- paste0(getwd(),
-                       "/analysis")
-
-## Caption for diagrams
-caption <- paste("Fobbe | DOI:",
-                 config$doi$data$version)
-
-
-## Prefix for figure titles
-prefix.figuretitle <- paste(config$project$shortname,
-                            "| Version",
-                            datestamp)
-
-## File prefix
-prefix.files <- paste0(config$project$shortname,
-                       "_",
-                       datestamp)
-
-
-if (config$cores$max == TRUE){
-    fullCores <- future::availableCores() - 1
-}
-
-
-if (config$cores$max == FALSE){
-    fullCores <- as.integer(config$cores$number)
-}
-
-```
-
-
-
-
-## Funktionen definieren
-
-```{targets global-functions, tar_globals = TRUE}
-
-lapply(list.files("functions", pattern = "\\.R$", full.names = TRUE), source)
-
-```
-
-
-
-## Metadaten für TXT-Dateien definieren
-
-```{targets global-txtvars, tar_globals = TRUE}
-
-docvarnames <- c("gericht",
-                 "datum",
-                 "spruchkoerper_typ",
-                 "spruchkoerper_az",
-                 "registerzeichen",
-                 "eingangsnummer",
-                 "eingangsjahr_az",
-                 "kollision",
-                 "name",
-                 "band",
-                 "seite")
-
-```
-
-
-## ZIP-Datei für Source definieren
-
-```{targets global-sourcefiles, tar_globals = TRUE}
-
-files.source.raw <-  c(list.files(pattern = "\\.R$|\\.toml$|\\.R?md$|\\.yaml|\\.sh|\\.txt"),
-                       "Dockerfile",
-					   "reports",
-                       "data",
-                       "functions",
-                       "tex",
-                       "gpg",
-                       "buttons")
-
-```
-
-
-
-
-
-
-# Pipeline: Konstruktion
-
-
-
-
-## File Tracking Targets
-
-Mit diesem Abschnitt der Pipeline werden Input-Dateien getrackt und eingelesen. Mit der Option \enquote{format = "file"} werden für Input-Dateien Prüfsummen berechnet. Falls sich diese verändern werden alle von ihnen abhängigen Pipeline-Schritte als veraltet markiert und neu berechnet.
-
-
-
-
-
-
-### Source Code
-
-Dies sind alle Dateien, die den Source Code für den Datensatz bereitstellen.
-
-```{targets tar.file.source}
-tar_target(files.source,
-           files.source.raw,
-           format = "file")
-
-```
-
-
-### Changelog
-
-```{targets tar.file.changelog}
-tar_target(changelog,
-           "CHANGELOG.md",
-           format = "file")
-```
-
-
-
-### Variablen für die BVerfGE
-
-Diese Tabelle enthält Name, Band und Seite der Entscheidung in der BVerfGE. 
-
-
-```{targets tar.file.bverfge}
-list(
-    tar_target(file.var_bverfge,
-               "data/BVerfGE_Variablen_NameBandSeite.csv",
-               format = "file"),
-    tar_target(dt.var_bverfge,
-               fread(file.var_bverfge))
+## Targets Pipeline definieren
+
+```{r define-targets}
+tar_config_set(store = "_targets")
+
+rag_targets <- list(
+  # 1. Download-Tabelle erstellen (mit Debug-Modus falls aktiviert)
+  tar_target(
+    name = download_table,
+    command = f.download_table_make(
+      debug.toggle = config$debug$toggle,
+      debug.pages = config$debug$pages
+    )
+  ),
+  
+  # 2. Dateinamen für Downloads vorbereiten
+  tar_target(
+    name = download_prep,
+    command = {
+      # HTML-URLs und Dateinamen extrahieren
+      urls <- download_table$url_html
+      filenames <- paste0("decision_", seq_len(nrow(download_table)), ".html")
+      
+      list(urls = urls, filenames = filenames)
+    }
+  ),
+  
+  # 3. HTML-Dateien herunterladen (nur neue Dateien!)
+  tar_target(
+    name = html_files,
+    command = f.download(
+      url = download_prep$urls,
+      filename = download_prep$filenames,
+      dir = "html_cache",
+      clean = FALSE,  # Keine Bereinigung, um vorhandene Dateien zu behalten
+      debug.toggle = config$debug$toggle
+    )
+  ),
+  
+  # 4. HTML-Dateien parsen (nur neue/geänderte Dateien)
+  tar_target(
+    name = parsed_decisions,
+    command = {
+      parsed_list <- vector("list", length(html_files))
+      for(i in seq_along(html_files)) {
+        if(file.exists(html_files[i])) {
+          parsed_list[[i]] <- f.parse_html_bverfg(html_files[i])
+        }
+      }
+      parsed_list[!sapply(parsed_list, is.null)]
+    }
+  ),
+  
+  # 5. Inhalte extrahieren
+  tar_target(
+    name = extracted_texts,
+    command = {
+      text_list <- lapply(parsed_decisions, f.bverfg.extract.content)
+      do.call(rbind, text_list)
+    }
+  ),
+  
+  # 6. Metadaten extrahieren
+  tar_target(
+    name = extracted_meta,
+    command = {
+      meta_list <- lapply(parsed_decisions, f.bverfg.extract.meta)
+      do.call(rbind, meta_list)
+    }
+  ),
+  
+  # 7. Daten kombinieren und bereinigen
+  tar_target(
+    name = rag_corpus,
+    command = {
+      # Sicherstellen dass beide data.tables sind
+      if(!is.data.table(extracted_meta)) extracted_meta <- as.data.table(extracted_meta)
+      if(!is.data.table(extracted_texts)) extracted_texts <- as.data.table(extracted_texts)
+      
+      # Zusammenführen (falls beide gleiche ID-Spalte haben)
+      if("id" %in% names(extracted_meta) && "id" %in% names(extracted_texts)) {
+        corpus <- merge(extracted_meta, extracted_texts, by = "id", all = TRUE)
+      } else {
+        # Falls keine ID-Spalte, einfach cbind (angenommen gleiche Reihenfolge)
+        corpus <- cbind(extracted_meta, extracted_texts)
+      }
+      
+      # Bereinigung für RAG
+      if("content" %in% names(corpus)) {
+        corpus <- corpus[!is.na(content) & nchar(content) > 100]
+        corpus[, content := stringr::str_trim(content)]
+      }
+      
+      # Falls URL-Spalte nicht vorhanden, aus download_table hinzufügen
+      if(!"url" %in% names(corpus) && nrow(corpus) == nrow(download_table)) {
+        corpus[, url := download_table$url_html]
+      }
+      
+      return(corpus)
+    }
+  ),
+  
+  # 8. RAG-Export mit inkrementeller Info
+  tar_target(
+    name = rag_export,
+    command = {
+      # Timestamp für inkrementelle Updates
+      timestamp <- Sys.time()
+      
+      # Corpus mit Metadaten ergänzen
+      rag_corpus[, last_updated := timestamp]
+      
+      # Export in verschiedenen Formaten
+      fwrite(rag_corpus, "output/bverfg_rag_corpus.csv")
+      saveRDS(rag_corpus, "output/bverfg_rag_corpus.rds")
+      jsonlite::write_json(rag_corpus, "output/bverfg_rag_corpus.json")
+      
+      # Inkrementelle Update-Info speichern
+      update_info <- list(
+        last_run = timestamp,
+        total_decisions = nrow(rag_corpus),
+        cache_dir = "html_cache"
+      )
+      saveRDS(update_info, "output/update_info.rds")
+      
+      # Statistiken ausgeben
+      cat("📄 RAG Corpus aktualisiert:\n")
+      cat("- Anzahl Entscheidungen:", nrow(rag_corpus), "\n")
+      cat("- Letzte Aktualisierung:", as.character(timestamp), "\n")
+      cat("- Cache-Ordner:", "html_cache/", "\n")
+      
+      if(file.exists("output/update_info.rds")) {
+        cat("✅ Inkrementelle Updates aktiv - nur neue Entscheidungen werden heruntergeladen\n")
+      }
+      
+      return("Export abgeschlossen")
+    }
+  )
 )
 ```
 
-
-
-
-
-### Liste aller Variablen
-
-Die Variablen des Datensatzes, inklusive ihrer Erläuterung.
-
-
-```{targets tar.file.vars}
-list(
-    tar_target(file.var_codebook,
-               "data/CE-BVerfG_Variables.csv",
-               format = "file"),
-    tar_target(dt.var_codebook,
-               fread(file.var_codebook))
-)
-```
-
-
-
-### Aktenzeichen der Bundesrepublik Deutschland (AZ-BRD)
-
-Die Tabelle der Registerzeichen und der ihnen zugeordneten Verfahrensarten stammt aus dem folgenden Datensatz: \enquote{Seán Fobbe (2021). Aktenzeichen der Bundesrepublik Deutschland (AZ-BRD). Version 1.0.1. Zenodo. DOI: 10.5281/zenodo.4569564.}
-
-`
-
-```{targets tar.file.azbrd}
-list(
-    tar_target(file.az.brd,
-           "data/AZ-BRD_1-0-1_DE_Registerzeichen_Datensatz.csv",
-           format = "file"),
-     tar_target(az.brd,
-                fread(file.az.brd))
-     )
-```
-
-### Presidents and Vice-Presidents of the Federal Courts of Germany (PVP-FCG)
-
- Die Personendaten stammen aus folgendem Datensatz: \enquote{Seán Fobbe and Tilko Swalve (2021). Presidents and Vice-Presidents of the Federal Courts of Germany (PVP-FCG). Version 2021-04-08. Zenodo. DOI: 10.5281/zenodo.4568682}.
-
-
-```{targets tar.file.presi}
-list(
-    tar_target(file.presidents,
-           "data/PVP-FCG_2021-04-08_GermanFederalCourts_Presidents.csv",
-           format = "file"),
-     tar_target(presidents,
-                fread(file.presidents))
-     )
-```
-
-
-
-```{targets tar.vpresi}
-list(
-    tar_target(file.vpresidents,
-           "data/PVP-FCG_2021-04-08_GermanFederalCourts_VicePresidents.csv",
-           format = "file"),
-     tar_target(vpresidents,
-                fread(file.vpresidents))
-     )
-```
-
-
-
-
-
-
-## Download Targets
-
-
-### Vorläufige Download-Tabelle erstellen
-
-```{targets tar.download.make}
-tarchetypes::tar_age(dt.download,
-                     f.download_table_make(debug.toggle = config$debug$toggle,
-                                           debug.pages = config$debug$pages),
-                     age = as.difftime(3, units = "days"))
-								 
-```
-
-### Vorläufige Dateinamen erstellen
-
-```{targets tar.download.filenames.prelim}
-tar_target(filenames.raw,
-           f.filenames_raw(url.pdf = dt.download$url_pdf))
-```
-
-### Finale Dateinamen erstellen
-
-```{targets tar.download.filenames.final}
-tar_target(filenames.final,
-           f.filenames_final(filenames.raw = filenames.raw,
-                             var.bverfge = dt.var_bverfge))
-```
-
-
-### Finale Download-Tabelle erstellen
-
-```{targets tar.download.final}
-tar_target(dt.download.final,
-           f.download_finalize(dt.download = dt.download,
-                               filenames.final = filenames.final))
-```
-
-
-### Download durchführen (PDF)
-
-
-```{targets tar.download.pdf}
-tar_target(files.pdf,
-                f.download(url = dt.download.final$url_pdf,
-                           filename = dt.download.final$doc_id,
-                           dir = "files/pdf",
-                           sleep.min = 0.3,
-                           sleep.max = 1,
-                           retries = 3,
-                           retry.sleep.min = 2,
-                           retry.sleep.max = 5,
-                           timeout = config$download$timeout,
-                           debug.toggle = FALSE,
-                           debug.files = 500),
-                format = "file")
-
-```
-
-
-### Download durchführen (HTML)
-
-
-```{targets tar.download.html}
-tar_target(files.html,
-                f.download(url = dt.download.final$url_html,
-                           filename = basename(dt.download.final$url_html),
-                           dir = "files/html",
-                           sleep.min = 0,
-                           sleep.max = 0.2,
-                           retries = 3,
-                           retry.sleep.min = 2,
-                           retry.sleep.max = 5,
-                           timeout = config$download$timeout,
-                           debug.toggle = FALSE,
-                           debug.files = 500),
-                format = "file")
-
-```
-
-
-
-## Convert Targets
-
-
-### TXT-Dateien erstellen und einlesen
-
-Es werden die PDF-Dateien in TXT konvertiert und mitsamt den Variablen in ihren Dateinamen eingelesen. Beim Einlesen werden die in PDF-Dateien üblichen über Zeilen gebrochene Wörter wieder zusammengefügt.
-
-
-
-```{targets tar.convert.txt}
-
-list(tar_target(files.txt,
-                f.tar_pdf_extract(x = files.pdf,
-                                  outputdir = "files/txt",
-								  multicore = config$parallel$extractPDF,
-                                  cores = fullCores),
-                format = "file"),
-     tar_target(dt.bverfg,
-                f.readtext(x = files.txt,
-                           docvarnames = docvarnames))
-     )
-					
-```					
-
-
-### HTML-Dateien parsen
-
-```{targets tar.convert.html.parse}
-
-tar_target(html.parsed,
-           f.parse_html_bverfg(html = files.html))
-
-```
-
-
-### HTML Parse-Ergebnis splitten
-
-
-
-```{targets tar.convert.html.split}
-
-list(
-    tar_target(dt.html.meta,
-               f.clean_meta(html.parsed$dt.meta.html)),
-    tar_target(dt.segmented,
-               f.clean_segmented(html.parsed$dt.segmented.full))
-)
-		   
-
-```
-
-
-
-
-
-## Enhance Targets
-
-Dieser Abschnitt der Pipeline berechnet diverse Verbesserungen für den Datensatz und führt diese am Ende zusammen.
-
-
-### Daten standardisieren
-
-Das Datum wird im ISO-Format standardisiert und die Variablen \enquote{entscheidungsjahr} und \enquote{eingangsjahr\_iso} hinzugefügt.
-
-
-```{targets tar.enhance.dateclean}
-tar_target(dt.bverfg.datecleaned,
-           f.clean_dates(dt.bverfg))
-```
-
-
-
-### Variable erstellen: \enquote{verfahrensart}
-
-Die Variable \enquote{verfahrensart} wird aus den Registerzeichen berechnet.
-
-```{targets tar.enhance.verfahrensart}
-tar_target(var_verfahrensart,
-                f.var_verfahrensart(dt.bverfg.datecleaned$registerzeichen,
-                                    az.brd = az.brd,
-                                    gericht = "BVerfG"))
-```
-
-
-### Variable erstellen: \enquote{aktenzeichen}
-
-Das Aktenzeichen wird aus seinen Komponenten berechnet.
-
-
-```{targets tar.enhance.aktenzeichen}
-tar_target(var_aktenzeichen,
-                f.var_aktenzeichen(dt.bverfg.datecleaned,
-                                   az.brd = az.brd,
-                                   gericht = "BVerfG",
-								   remove.na = TRUE))
-```
-
-
-### Variable erstellen: \enquote{ecli}
-
-Die ECLI wird aus ihren Komponenten berechnet.
-
-
-
-```{targets tar.enhance.ecli}
-tar_target(var_ecli,
-           f.var_ecli_bverfg(x = dt.bverfg.datecleaned))
-```
-
-
-
-
-### Variable erstellen: \enquote{praesi}
-
-
-```{targets tar.enhance.praesi}
-tar_target(var_praesi,
-           f.presidents(datum = dt.bverfg.datecleaned$datum,
-                        gericht = "BVerfG",
-						pvp.fcg = presidents))
-```
-
-### Variable erstellen: \enquote{vpraesi}
-
-
-```{targets tar.enhance.vpraesi}
-tar_target(var_vpraesi,
-           f.presidents(datum = dt.bverfg.datecleaned$datum,
-                        gericht = "BVerfG",
-						pvp.fcg = vpresidents))
-```
-
-
-
-
-### Variablen erstellen: \enquote{zeichen, token, typen, saetze}
-
-Berechnung klassischer linguistischer Kennzahlen.
-
-
-
-```{targets tar.enhance.lingstats}
-tar_target(var_lingstats,
-                f.lingstats(dt.bverfg.datecleaned,
-                            multicore = config$parallel$lingsummarize,
-                            cores = fullCores,
-                            germanvars = TRUE))
-```
-
-
-
-
-
-### Konstanten erstellen
-
-Konstanten die dem Datensatz wichtige Herkunftsinformationen hinzufügen. Darunter sind die Versionsnummer, die Version DOI, die Concept DOI und die Lizenz.
-
-
-
-```{targets tar.enhance.constants}
-tar_target(var_constants,
-           data.frame(version = as.character(datestamp),
-                      doi_concept = config$doi$data$concept,
-                      doi_version = config$doi$data$version,
-                      lizenz = as.character(config$license$data))[rep(1,
-                                                                      nrow(dt.bverfg.datecleaned)),])
-```
-
-
-
-
-
-### Zusätzliche Variablen zusammenführen
-
-```{targets tar.enhance.additional}
-tar_target(vars_additional,
-           data.table(verfahrensart = var_verfahrensart,
-                      aktenzeichen = var_aktenzeichen,
-                      ecli = var_ecli,
-                      praesi = var_praesi,
-                      v_praesi = var_vpraesi,
-                      var_lingstats,
-                      var_constants))
-
-```
-
-
-### Datensatz und zusätzliche Variablen verbinden
-
-```{targets tar.enhance.varmerge}
-tar_target(dt.bverfg.intermediate,
-           cbind(dt.bverfg.datecleaned,
-                 vars_additional))
-
-```
-
-### Hauptdatensatz in segmentierte Variante mergen
-
-```{targets tar.enhance.segmented}
-
-tar_target(dt.segmented.final,
-           f.finalize_segmented(dt.segmented = dt.segmented,
-                                dt.bverfg.intermediate = dt.bverfg.intermediate,
-								dt.download.final = dt.download.final,
-                                varnames = dt.var_codebook$varname))
-
-```
-
-
-### Finalen Datensatz erstellen
-
-Die Verbesserungen der vorherigen Schritte werden in dieser Funktion zusammengefügt um den finalen Datenatz herzustellen.
-
-
-```{targets tar.enhance.final}
-tar_target(dt.bverfg.final,
-           f.finalize_main(dt.bverfg.intermediate = dt.bverfg.intermediate,
-                           dt.download.final = dt.download.final,
-                           dt.html.meta = dt.html.meta,
-                           varnames = dt.var_codebook$varname))
-
-```
-
-
-
-### Variante erstellen: Nur Metadaten
-
-Hier wird die Text-Variable entfernt, um eine deutlich platzsparendere Variante des Datensatzes zu erstellen. Enthalten sind nur noch die Metadaten.
-
-
-
-```{targets tar.enhance.meta}
-tar_target(dt.bverfg.meta,
-                dt.bverfg.final[, !"text"])
-
-```
-
-
-### Variante erstellen: Annotiert
-
-
-```{targets tar.enhance.annotated, eval = FALSE}
-tar_target(dt.bverfg.annotated,
-           f.tar_udpipe(dt.bverfg.final,
-                        language = "german-hdt",
-                        model_dir = "temp",
-                        cores = fullCores))
-
-```
-
-
-## Zitate extrahieren
-
-```{targets tar.citations}
-tar_target(igraph_citations,
-           f.citation_extraction_bverfg(dt.final = dt.bverfg.final))
-
-```
-
-
-
-
-
-
-
-
-## Write Targets
-
-Dieser Abschnitt der Pipeline schreibt den Datensatz und alle Hash-Prüfsummen auf die Festplatte.
-
-
-
-### CSV schreiben: Voller Datensatz
-
-```{targets tar.write.final}
-tar_target(csv.final,
-           f.tar_fwrite(x = dt.bverfg.final,
-                        filename = file.path("output",
-                                             paste0(prefix.files,
-                                                    "_DE_CSV_Datensatz.csv"))
-                        )
-           )
-```
-
-
-
-### CSV schreiben: Metadaten
-
-
-```{targets tar.write.meta}
-tar_target(csv.meta,
-           f.tar_fwrite(x = dt.bverfg.meta,
-                        filename = file.path("output",
-                                             paste0(prefix.files,
-                                                    "_DE_CSV_Metadaten.csv"))
-                        )
-           )
-```
-
-### CSV schreiben: Segmentierte Variante
-
-
-```{targets tar.write.segmented}
-tar_target(csv.segmented,
-           f.tar_fwrite(x = dt.segmented.final,
-                        filename = file.path("output",
-                                             paste0(prefix.files,
-                                                    "_DE_CSV_Segmentiert.csv"))
-                        )
-           )
-```
-
-
-### GraphML schreiben
-
-```{targets tar.write.graphs}
-
-tar_target(graphml_citations, 
-           f.tar_write_graph(graph = igraph_citations,
-                             file = file.path("output",
-                                              paste0(prefix.files, 
-                                                     "_GraphML_Zitationsnetzwerk.graphml")),
-                             format = "graphml"),
-           format = "file")
-
-```
-
-
-
-
-
-## Report Targets
-
-Dieser Abschnitt der Pipeline erstellt die finalen Berichte (Codebook und Robustness Checks).
-
-
-
-### LaTeX-Definitionen schreiben
-
-Um Variablen aus der Pipeline in die LaTeX-Kompilierung einzuführen, müssen diese als .tex-Datei auf die Festplatte geschrieben werden.
-
-```{targets tar.report.latex}
-tar_target(latexdefs,
-                f.latexdefs(config,
-                            dir = "temp",
-                            version = datestamp),
-	       format = "file")
-
-```
-
-
-
-### Zusammenfassungen linguistischer Kennwerte berechnen
-
-```{targets tar.report.lingstats}
-tar_target(lingstats.summary,
-                f.lingstats_summary(dt.bverfg.final,
-                                    germanvars = TRUE))
-
-```
-
-
-### Report erstellen: Robustness Checks
-
-```{targets tar.report.robustness}
-tarchetypes::tar_render(report.robustness,
-                        file.path("reports",
-                                  "RobustnessChecks.Rmd"),
-                        output_file = file.path("../output",
-                                                paste0(config$project$shortname,
-                                                       "_",
-                                                       datestamp,
-                                                       "_RobustnessChecks.pdf")))
-
-```
-
-
-
-### Report erstellen: Codebook
-
-
-
-```{targets tar.report.codebook}
-tarchetypes::tar_render(report.codebook,
-                        file.path("reports",
-                                  "Codebook.Rmd"),
-                        output_file = file.path("../output",
-                                                paste0(config$project$shortname,
-                                                       "_",
-                                                       datestamp,
-                                                       "_Codebook.pdf")))
-
-```
-
-
-
-## ZIP Targets
-
-Diese Abschnitt der Pipeline erstellt ZIP-Archive für alle zentralen Rechenergebnisse und speichert diese im Ordner \enquote{output}.
-
-
-### ZIP erstellen: Source Code
-
-
-```{targets tar.zip.source}
-tar_target(zip.source,
-                f.tar_zip(files.source,
-                              filename = paste0(prefix.files,
-                                                "_Source_Code.zip"),
-                              dir = "output",
-                              mode = "mirror"),
-                format = "file")
-```
-
-
-
-
-### ZIP erstellen: Analyse-Dateien
-
-```{targets tar.zip.analysis}
-tar_target(zip.analysis,
-           f.tar_zip("analysis/",
-                     filename = paste(prefix.files,
-                                      "DE_Analyse.zip",
-                                      sep = "_"),
-                     dir = "output",
-                     mode = "cherry-pick",
-                     report.codebook,    # manually enforced dependency relationship
-                     report.robustness), # manually enforced dependency relationship
-           format = "file")
-```
-
-
-### ZIP erstellen: CSV-Datei (voller Datensatz)
-
-
-```{targets tar.zip.csv.full}
-tar_target(zip.csv.final,
-                f.tar_zip(csv.final,
-                              filename = gsub("\\.csv", "\\.zip", basename(csv.final)),
-                              dir = "output",
-                              mode = "cherry-pick"),
-                format = "file")
-```
-
-
-
-### ZIP erstellen: CSV-Datei (nur Metadaten)
-
-
-```{targets tar.zip.csv.meta}
-tar_target(zip.csv.meta,
-                f.tar_zip(csv.meta,
-                              filename = gsub("\\.csv", "\\.zip", basename(csv.meta)),
-                              dir = "output",
-                              mode = "cherry-pick"),
-                format = "file")
-```
-
-
-### ZIP erstellen: CSV-Datei (Segmentiert)
-
-
-```{targets tar.zip.csv.segmented}
-tar_target(zip.csv.segmented,
-                f.tar_zip(csv.segmented,
-                              filename = gsub("\\.csv", "\\.zip", basename(csv.segmented)),
-                              dir = "output",
-                              mode = "cherry-pick"),
-                format = "file")
-```
-
-
-
-
-
-
-### ZIP erstellen: PDF-Dateien (alle Entscheidungen)
-
-```{targets tar.zip.pdf.all}
-tar_target(zip.pdf.all,
-           f.tar_zip(files.pdf,
-                     filename = paste(prefix.files,
-                                      "DE_PDF_Datensatz.zip",
-                                      sep = "_"),
-                     dir = "output",
-                     mode = "cherry-pick"),
-           format = "file")
-```
-
-
-
-
-### ZIP erstellen: TXT-Dateien
-
-```{targets tar.zip.txt}
-tar_target(zip.txt,
-           f.tar_zip(files.txt,
-                     filename = paste(prefix.files,
-                                      "DE_TXT_Datensatz.zip",
-                                      sep = "_"),
-                     dir = "output",
-                     mode = "cherry-pick"),
-           format = "file")
-```
-
-
-
-### ZIP erstellen: HTML-Dateien
-
-```{targets tar.zip.html}
-tar_target(zip.html,
-           f.tar_zip(files.html,
-                     filename = paste(prefix.files,
-                                      "DE_HTML_Datensatz.zip",
-                                      sep = "_"),
-                     dir = "output",
-                     mode = "cherry-pick"),
-           format = "file")
-```
-
-
-
-
-### ZIP erstellen: GraphML
-
-```{targets tar.zip.graphml}
-tar_target(zip.graphml,
-           f.tar_zip(graphml_citations,
-                     filename = paste(prefix.files,
-                                      "DE_GraphML_Zitationsnetzwerk.zip",
-                                      sep = "_"),
-                     dir = "output",
-                     mode = "cherry-pick"),
-           format = "file")
-```
-
-
-
-
-
-
-## Kryptographische Hashes
-
-### Zu hashende ZIP-Archive definieren
-
-
-```{targets tar.hashes.manifest}
-tar_target(zip.all,
-           c(zip.pdf.all,
-             zip.txt,
-             zip.html,
-             zip.csv.final,
-             zip.csv.meta,
-			 zip.csv.segmented,
-			 zip.graphml,
-             zip.analysis,
-             zip.source))
-```
-
-### Kryptographische Hashes berechnen
-
-
-```{targets tar.hashes.calc}
-tar_target(hashes,
-           f.tar_multihashes(c(zip.all,
-                               report.codebook[1],
-                               report.robustness[1]),
-                             multicore = config$parallel$multihashes,
-                             cores = fullCores))
-```
-
-
-
-### CSV schreiben: Kryptographische Hashes
-
-
-```{targets tar.hashes.write}
-tar_target(csv.hashes,
-           f.tar_fwrite(x = hashes,
-                        filename = file.path("output",
-                                             paste0(prefix.files,
-                                                    "_KryptographischeHashes.csv"))
-                        )
-           )
-```
-
-
-
-
-
-
-
-# Pipeline: Kompilierung
-
-
-
-## Durchführen der Kompilierung
-
-```{r pipeline-run, results = "hide"}
+## Pipeline ausführen
+
+```{r run-pipeline, eval=FALSE}
+# Targets definieren und Pipeline starten
+tar_script({
+  library(targets)
+  library(tarchetypes)
+  library(data.table)
+  library(jsonlite)
+  
+  # Konfiguration laden
+  config <- RcppTOML::parseTOML("config.toml")
+  
+  # Funktionen laden
+  source("functions/f.download.R")
+  source("functions/f.download_table_make.R") 
+  source("functions/f.linkextract.R")
+  source("functions/f.parse_html_bverfg.R")
+  source("functions/f.bverfg.extract.content.R")
+  source("functions/f.bverfg.extract.meta.R")
+  source("functions/f.clean_meta.R")
+  
+  rag_targets
+})
+
+# Pipeline starten
 tar_make()
 ```
 
+## Update-Status prüfen
 
-
-## Pipeline archivieren
-
-
-```{r pipeline-zip}
-zip(paste0("output/",
-           paste0(config$project$shortname,
-                  "_",
-                  datestamp),
-           "_Targets_Storage.zip"),
-    "_targets/")
-```
-
-
-
-
-## Visualisierung
-
-```{r, pipeline-graph, fig.width = 10, fig.height = 14}
-
-edgelist <- tar_network(targets_only = TRUE)$edges
-setDT(edgelist)
-
-g  <- igraph::graph_from_data_frame(edgelist,
-                                    directed = TRUE)
-
-
-ggraph(g,
-       'sugiyama') + 
-    geom_edge_diagonal(colour = "grey70")+
-    geom_node_point(size = 2)+
-    geom_node_text(aes(label = name),
-                   size = 2,
-                   repel = TRUE)+
-    theme_void()
-
-```
-                       
-
-
-
-# Pipeline: Analyse
-
-
-## Gesamte Liste
-
-Die vollständige Liste aller Targets, inklusive ihres Types und ihrer Größe. Targets die auf Dateien verweisen (z.B. alle PDF-Dateien) geben die Gesamtgröße der Dateien auf der Festplatte an.
-
-
-
-
-
-```{r, pipeline-list}
-
-meta <- tar_meta(fields = c("type", "bytes", "format"), complete_only = TRUE)
-setDT(meta)
-meta$MB <- round(meta$bytes / 1e6, digits = 2)
-
-# Gesamter Speicherplatzverbrauch
-sum(meta$MB, na.rm = TRUE)
-
-kable(meta[order(type, name)],
-      format = "latex",
-      align = "r",
-      booktabs = TRUE,
-      longtable = TRUE) %>% kable_styling(latex_options = "repeat_header")
-
-
-```
-
-\newpage
-## Timing
-
-### Gesamte Laufzeit
-
-```{r, pipeline-runtime}
-meta <- tar_meta(fields = c("time", "seconds"), complete_only = TRUE)
-setDT(meta)
-meta$mins <- round(meta$seconds / 60, digits = 2)
-
-runtime.sum <- sum(meta$seconds)
-
-## Sekunden
-print(runtime.sum)
-
-## Minuten
-runtime.sum / 60
-
-## Stunden
-runtime.sum / 3600
-```
-
-### Laufzeit einzelner Targets
-
-Der Zeitpunkt an dem die Targets berechnet wurden und ihre jeweilige Laufzeit in Sekunden.
-
-
-```{r, pipeline-timing}
-kable(meta[order(-seconds)],
-      format = "latex",
-      align = "r",
-      booktabs = TRUE,
-      longtable = TRUE) %>% kable_styling(latex_options = "repeat_header")
-
-
-```
-
-
-
-\newpage
-## Warnungen
-
-**Hinweis:** für die folgenden Entscheidungen waren auch nach manueller Nachprüfung keine PDF-Downloads verfügbar:
-
-- ECLI:DE:BVerfG:2001:bs20011001.2bvb000101
-- ECLI:DE:BVerfG:2001:rk20011023.2bvr123601
-- ECLI:DE:BVerfG:2004:rk20040519.1bvr071104
-- ECLI:DE:BVerfG:2014:rk20140319.1bvr141710
-- ECLI:DE:BVerfG:2014:rk20140610.1bvr066914
-
-
-
-```{r, pipline-warnings, results = 'asis'}
-
-meta <- tar_meta(fields = "warnings", complete_only = TRUE)
-setDT(meta)
-meta$warnings <- gsub("(\\.pdf|\\.html?|\\.txt)", "\\1 \n\n", meta$warnings)
-
-if (meta[,.N > 0]){
-
-    for(i in 1:meta[,.N]){
-
-        cat(paste("###", meta[i]$name), "\n\n")
-        cat(paste(meta[i]$warnings, "\n\n"))
-        
-    }
-
-}else{
-
-    cat("No warnings to report.")
-
+```{r check-updates}
+if(file.exists("output/update_info.rds")) {
+  update_info <- readRDS("output/update_info.rds")
+  
+  cat("🔄 Letzte Aktualisierung:", as.character(update_info$last_run), "\n")
+  cat("📁 Cache-Ordner:", update_info$cache_dir, "\n")
+  
+  # Anzahl gecachter Dateien
+  if(dir.exists(update_info$cache_dir)) {
+    cached_files <- length(list.files(update_info$cache_dir, pattern = "\\.html$"))
+    cat("💾 Gecachte HTML-Dateien:", cached_files, "\n")
+  }
+} else {
+  cat("ℹ️ Noch keine Updates durchgeführt.\n")
 }
-
 ```
 
+## Ergebnisse
 
-
-\newpage
-## Fehlermeldungen
-
-```{r, pipeline-errors}
-
-meta <- tar_meta(fields = "error", complete_only = TRUE)
-setDT(meta)
-
-if (meta[,.N > 0]){
-
-    for(i in 1:meta[,.N]){
-
-        cat(paste("###", meta[i]$name), "\n\n")
-        cat(paste(meta[i]$error, "\n\n"))
-        
-    }
-
-}else{
-
-    cat("No errors to report.")
-
+```{r results}
+if(file.exists("output/bverfg_rag_corpus.csv")) {
+  cat("✅ RAG Corpus erfolgreich erstellt!\n\n")
+  
+  corpus <- fread("output/bverfg_rag_corpus.csv")
+  
+  cat("📊 Corpus-Statistiken:\n")
+  cat("- Gesamtzahl Entscheidungen:", nrow(corpus), "\n")
+  
+  if("content" %in% names(corpus)) {
+    cat("- Textlänge (Median):", median(nchar(corpus$content), na.rm = TRUE), "Zeichen\n")
+  }
+  
+  if("date" %in% names(corpus)) {
+    date_range <- range(corpus$date, na.rm = TRUE)
+    cat("- Zeitraum:", date_range[1], "bis", date_range[2], "\n")
+  }
+  
+  cat("\n📁 Verfügbare Dateien:\n")
+  cat("- CSV: output/bverfg_rag_corpus.csv\n")
+  cat("- RDS: output/bverfg_rag_corpus.rds\n")  
+  cat("- JSON: output/bverfg_rag_corpus.json\n")
+  cat("- Update-Info: output/update_info.rds\n")
+} else {
+  cat("❌ Pipeline noch nicht ausgeführt. Führen Sie tar_make() aus.\n")
 }
-
-
 ```
 
+## 🔄 Inkrementelle Updates
 
+**So funktioniert das intelligente Download-System:**
 
+1. **Beim ersten Lauf**: 
+   - Alle BVerfG-Entscheidungen werden heruntergeladen
+   - Dateien werden in `html_cache/` gespeichert
 
+2. **Bei späteren Läufen**:
+   - Nur neue Entscheidungen werden heruntergeladen  
+   - Bereits vorhandene HTML-Dateien werden übersprungen
+   - ⚡ **Deutlich schneller!**
 
+3. **Cache-Management**:
+   - HTML-Dateien bleiben erhalten
+   - Keine unnötigen Re-Downloads
+   - Update-Informationen in `output/update_info.rds`
 
-# Dateigrößen
+## Für RAG optimierte Datenstruktur
 
+Die exportierten Daten enthalten:
 
+- **id**: Eindeutige Kennung
+- **title**: Titel der Entscheidung  
+- **date**: Entscheidungsdatum
+- **content**: Volltext (bereinigt)
+- **url**: Original-URL
+- **last_updated**: Zeitstempel der letzten Aktualisierung
 
-
-## ZIP und CSV-Dateien
-
-
-
-## ZIP-Dateien
-
-```{r filesize.zip}
-
-files <- list.files("output", pattern = "\\.zip", full.names = TRUE)
-
-filesize <- round(file.size(files) / 10^6, digits = 2)
-
-table.size <- data.table(basename(files),
-                         filesize)
-
-
-kable(table.size,
-      format = "latex",
-      align = c("l", "r"),
-      format.args = list(big.mark = ","),
-      booktabs = TRUE,
-      longtable = TRUE,
-      col.names = c("Datei",
-                    "Größe in MB"))
-
+Diese Struktur ist optimal für:
+- ✅ Vektorisierung mit Embedding-Modellen
+- ✅ Chunking für RAG-Systeme  
+- ✅ Metadaten-basierte Filterung
+- ✅ Inkrementelle Updates
 ```
-
-\newpage
-## CSV-Dateien
-
-```{r filesize.csv}
-
-files <- list.files("output", pattern = "\\.csv", full.names = TRUE)
-
-filesize <- round(file.size(files) / 10^6, digits = 2)
-
-table.size <- data.table(basename(files),
-                         filesize)
-
-
-kable(table.size,
-      format = "latex",
-      align = c("l", "r"),
-      format.args = list(big.mark = ","),
-      booktabs = TRUE,
-      longtable = TRUE,
-      col.names = c("Datei",
-                    "Größe in MB"))
-
-```
-
-
-
-
-## PDF-Dateien (MB)
-
-```{r}
-tar_load(files.pdf)
-pdf.MB <- file.size(files.pdf) / 10^6
-sum(pdf.MB)
-```
-
-
-## TXT-Dateien (MB)
-
-
-```{r}
-tar_load(files.txt)
-txt.MB <- file.size(files.txt) / 10^6
-sum(txt.MB)
-```
-
-
-
-
-
-# Kryptographische Signaturen
-
-## Signaturen laden
-
-```{r}
-tar_load(hashes)
-```
-
-
-## Leerzeichen hinzufügen um bei SHA3-512 Zeilenumbruch zu ermöglichen
-
-Hierbei handelt es sich lediglich um eine optische Notwendigkeit. Die normale 128 Zeichen lange Zeichenfolge von SHA3-512-Signaturen wird ansonsten nicht umgebrochen und verschwindet über die Seitengrenze. Das Leerzeichen erlaubt den automatischen Zeilenumbruch und damit einen für Menschen sinnvoll lesbaren Abdruck im Codebook. Diese Variante wird nur zur Anzeige verwendet und danach verworfen.
-
-```{r}
-hashes$sha3.512 <- paste(substr(hashes$sha3.512, 1, 64),
-                              substr(hashes$sha3.512, 65, 128))
-```
-
-
-
-## In Bericht anzeigen
-
-\ra{1.2}
-
-```{r}
-kable(hashes[,.(index,filename)],
-      format = "latex",
-      align = c("p{1cm}",
-                "p{13cm}"),
-      booktabs = TRUE,
-      longtable = TRUE)
-
-```
-
-\newpage
-
-```{r}
-
-kable(hashes[,.(index,sha2.256)],
-      format = "latex",
-      align = c("c",
-                "p{13cm}"),
-      booktabs = TRUE,
-      longtable = TRUE)
-
-
-
-kable(hashes[,.(index,sha3.512)],
-      format = "latex",
-      align = c("c",
-                "p{13cm}"),
-      booktabs = TRUE,
-      longtable = TRUE)
-```
-
-
-
-
-
-\newpage
-
-```{r, results = "asis", echo = FALSE}
-cat(readLines("CHANGELOG.md"),
-    sep = "\n")
-
-```
-
-
-# Abschluss
-
-```{r}
-
-## Datumsstempel
-print(datestamp) 
-
-## Datum und Uhrzeit (Anfang)
-print(begin.script)
-
-
-## Datum und Uhrzeit (Ende)
-end.script <- Sys.time()
-print(end.script)
-
-
-## Laufzeit des gesamten Skriptes
-print(end.script - begin.script)
-
-```
-
-
-# Parameter für strenge Replikationen
-
-
-```{r}
-system2("openssl", "version", stdout = TRUE)
-
-sessionInfo()
-
-```
-
-
-# Literaturverzeichnis

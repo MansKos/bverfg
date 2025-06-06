@@ -1,74 +1,26 @@
 [project]
-
-fullname = "Corpus der Entscheidungen des Bundesverfassungsgerichts"
-shortname = "CE-BVerfG"
+fullname = "BVerfG RAG Corpus"
+shortname = "BVerfG-RAG"
 author = "Seán Fobbe"
 
-
-
-[license]
-
-data = "Creative Commons Zero 1.0 Universal (CC Zero 1.0)"
-code = "GNU General Public License Version 3 (GPLv3)"
-
-
-
-[doi] # Digital Object Identifier (DOI)
-
-data.concept = "10.5281/zenodo.3902658" # checked
-data.version = "10.5281/zenodo.12705674" # checked
-
-software.concept = "10.5281/zenodo.4308216" # checked
-software.version = "10.5281/zenodo.12705675" # checked
-
-personendaten = "10.5281/zenodo.4568682" # checked
-aktenzeichen = "10.5281/zenodo.4569564" # checked
-
-
 [debug]
-
-toggle = false   # Ob Debugging aktiv ist; Möglichkeiten sind "true" oder "false"; Der Debugging-Modus reduziert den Such-Umfang auf den in der Variable "debug.scope" angegebenen Umfang Seiten
-pages = 20      # Die Anzahl der zufällig ausgewählten Seiten, die im Debugging-Modus berücksichtigt werden sollen (jede Seite enthält idR 10 Entscheidungen). Muss mindestens 10 betragen.
-
-
-
-[annotate]
-
-toggle = false # Wenn dieser Modus aktiviert ist wird  mittels spacyr eine zusätzliche Variante des Datensatzes mit umfangreichen linguistischen Annotationen berechnet. Sehr rechenintensiv!
-
-
+toggle = false
+pages = 20
 
 [cores]
-
-max = true  # Ob die maximale Anzahl an logischen Kernen genutzt werden soll; Möglichkeiten sind "true" oder "false"
-number = 8   # Die Anzahl Rechtenkerne, die verwendet werden soll; wird nur berücksichtigt falls "cores.max" auf "false" steht
-
-
-
-[parallel]
-
-extractPDF = true
-lingsummarize = true
-spacyparse = false
-multihashes = true
-
-
+max = true
+number = 8
 
 [download]
-timeout = 60			# Timeout für Downloads
+timeout = 60
 
 
 
-[quanteda]
-tokens_locale = "de_DE" # Locale in denen Tokens analyisert werden
-
-
-
-[fig] # Knitr
-
-format = [ "pdf", "png" ] 	# Ausgabe-Format für Diagramme
-dpi = 300     	 		# Auflösung für Diagramme
-align = "center"    		# Ausrichtung von Diagrammen im Compilation Report
+# RAG-spezifische Einstellungen
+[rag]
+include_metadata = true
+max_text_length = 10000  # Maximale Textlänge pro Chunk
+chunk_overlap = 200      # Überlappung zwischen Chunks
 
 
 
