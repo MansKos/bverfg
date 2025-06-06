@@ -1,5 +1,5 @@
 git
-pip
+python3-pip
 python3
 libatlas3-base
 libopenblas-base
